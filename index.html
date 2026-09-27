@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Cicli Corde AS 350</title>
+<title>AS 350 Rope Cycles</title>
 <meta name="theme-color" content="#1f4e9c">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -51,27 +51,27 @@
 </style>
 </head>
 <body>
-<header><h1>Cicli corde – AS 350</h1></header>
+<header><h1>Rope cycles – AS 350</h1></header>
 <nav>
-  <button data-vista="inserisci" class="attivo">Inserisci</button>
-  <button data-vista="totali">Totali</button>
-  <button data-vista="registro">Registro</button>
+  <button data-vista="inserisci" class="attivo">New entry</button>
+  <button data-vista="totali">Totals</button>
+  <button data-vista="registro">Log</button>
 </nav>
 <main>
   <section id="inserisci">
     <form id="modulo" novalidate>
       <div class="card">
-        <label for="data">Data (Datum)</label>
+        <label for="data">Date</label>
         <input type="date" id="data" required>
         <label for="pic">PIC</label>
         <input type="text" id="pic" autocomplete="name" required>
-        <label for="farbcode">Farbcode Transportleinen</label>
+        <label for="farbcode">Color code (transport lines)</label>
         <select id="farbcode"></select>
       </div>
       <div id="gruppi"></div>
       <p class="errore" id="errore"></p>
       <p class="ok" id="conferma"></p>
-      <button class="azione" type="submit">Salva</button>
+      <button class="azione" type="submit">Save</button>
     </form>
   </section>
 
@@ -79,9 +79,9 @@
 
   <section id="registro" hidden>
     <div class="card">
-      <button class="azione" id="esportaCsv">Esporta CSV</button>
-      <button class="azione secondaria" id="esportaBackup">Scarica backup</button>
-      <button class="azione secondaria" id="importaBackup">Ripristina backup</button>
+      <button class="azione" id="esportaCsv">Export CSV</button>
+      <button class="azione secondaria" id="esportaBackup">Download backup</button>
+      <button class="azione secondaria" id="importaBackup">Restore backup</button>
       <input type="file" id="fileBackup" accept="application/json,.json" hidden>
       <p class="errore" id="erroreBackup"></p>
     </div>
@@ -90,23 +90,23 @@
 </main>
 
 <script>
-const FARBCODES = ['Violett', 'Braun', 'Orange', 'Rot', 'Grau', 'Gelb-Grün'];
+const FARBCODES = ['Purple', 'Brown', 'Orange', 'Red', 'Grey', 'Yellow-Green'];
 // Colonne del foglio APP950-GEN, nello stesso ordine.
 const GRUPPI = [
-  { nome: 'Transportleinen', perFarbcode: true, campi: [
-    { k: 'daempfung', label: 'Dämpfung' },
+  { nome: 'Transport lines', perFarbcode: true, campi: [
+    { k: 'daempfung', label: 'Damper' },
     { k: 't10', label: '10 m' },
     { k: 't20', label: '20 m' },
     { k: 't30', label: '30 m' },
   ] },
-  { nome: 'Loggingleine', campi: [
-    { k: 'log_rot', label: 'Loggingleine rot' },
-    { k: 'log_blau', label: 'Loggingleine blau' },
+  { nome: 'Logging lines', campi: [
+    { k: 'log_rot', label: 'Logging line red' },
+    { k: 'log_blau', label: 'Logging line blue' },
   ] },
-  { nome: '2er Gehänge', campi: [
-    { k: 'geh_rot', label: '2er Gehänge rot' },
-    { k: 'geh_gelb', label: '2er Gehänge gelb' },
-    { k: 'geh_blau', label: '2er Gehänge blau' },
+  { nome: '2-leg slings', campi: [
+    { k: 'geh_rot', label: '2-leg sling red' },
+    { k: 'geh_gelb', label: '2-leg sling yellow' },
+    { k: 'geh_blau', label: '2-leg sling blue' },
   ] },
 ];
 const CAMPI = GRUPPI.flatMap(g => g.campi);
@@ -132,14 +132,14 @@ function salvaVoci() {
 
 // Ritorna un messaggio di errore, oppure null se la voce è valida.
 function valida(v) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v.data)) return 'Inserisci la data.';
-  if (typeof v.pic !== 'string' || !v.pic.trim()) return 'Inserisci il PIC.';
-  if (v.farbcode && !FARBCODES.includes(v.farbcode)) return 'Farbcode non valido.';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v.data)) return 'Enter the date.';
+  if (typeof v.pic !== 'string' || !v.pic.trim()) return 'Enter the PIC.';
+  if (v.farbcode && !FARBCODES.includes(v.farbcode)) return 'Invalid color code.';
   for (const c of CAMPI) {
-    if (!Number.isInteger(v.cicli[c.k]) || v.cicli[c.k] < 0) return `Valore non valido per ${c.label}.`;
+    if (!Number.isInteger(v.cicli[c.k]) || v.cicli[c.k] < 0) return `Invalid value for ${c.label}.`;
   }
-  if (CAMPI.every(c => v.cicli[c.k] === 0)) return 'Inserisci almeno un ciclo.';
-  if (CAMPI_TRASPORTO.some(k => v.cicli[k] > 0) && !v.farbcode) return 'Scegli il Farbcode delle Transportleinen.';
+  if (CAMPI.every(c => v.cicli[c.k] === 0)) return 'Enter at least one cycle.';
+  if (CAMPI_TRASPORTO.some(k => v.cicli[k] > 0) && !v.farbcode) return 'Select the color code of the transport lines.';
   return null;
 }
 
@@ -162,7 +162,7 @@ function dataIt(iso) {
 
 function creaCsv(elenco) {
   const cella = s => /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  const intestazione = ['Datum', 'PIC', 'Farbcode', ...CAMPI.map(c => `Zyklen ${c.label}`)];
+  const intestazione = ['Date', 'PIC', 'Color code', ...CAMPI.map(c => `Cycles ${c.label}`)];
   const righe = [...elenco].sort((a, b) => a.data.localeCompare(b.data)).map(v =>
     [dataIt(v.data), v.pic, v.farbcode, ...CAMPI.map(c => String(v.cicli[c.k] || ''))]);
   // BOM per far leggere correttamente le dieresi a Excel.
@@ -189,9 +189,9 @@ function costruisciModulo() {
         <div class="riga">
           <span>${c.label}</span>
           <span class="contatore">
-            <button type="button" data-meno="${c.k}" aria-label="Meno">−</button>
+            <button type="button" data-meno="${c.k}" aria-label="Minus">−</button>
             <input type="number" inputmode="numeric" min="0" step="1" id="c_${c.k}" value="0" aria-label="${c.label}">
-            <button type="button" data-piu="${c.k}" aria-label="Più">+</button>
+            <button type="button" data-piu="${c.k}" aria-label="Plus">+</button>
           </span>
         </div>`).join('')}
     </div>`).join('');
@@ -230,21 +230,21 @@ $('modulo').addEventListener('submit', e => {
   voci.push(v);
   if (!salvaVoci()) {
     voci.pop();
-    $('errore').textContent = 'Salvataggio non riuscito: memoria del browser non disponibile.';
+    $('errore').textContent = 'Save failed: browser storage is not available.';
     return;
   }
   try { scrivi('cicli-corde-pic', v.pic); } catch {}
   azzeraModulo();
-  $('conferma').textContent = `Salvato: ${dataIt(v.data)}, ${v.pic}.`;
+  $('conferma').textContent = `Saved: ${dataIt(v.data)}, ${v.pic}.`;
 });
 
 function mostraTotali() {
   const tot = calcolaTotali(voci);
   const nomi = Object.keys(tot);
-  $('totali').innerHTML = `<div class="card"><h2>Cicli totali per attrezzatura</h2>` +
-    (nomi.length ? `<table><tr><th>Attrezzatura</th><th class="num">Cicli</th></tr>` +
+  $('totali').innerHTML = `<div class="card"><h2>Total cycles per item</h2>` +
+    (nomi.length ? `<table><tr><th>Item</th><th class="num">Cycles</th></tr>` +
       nomi.map(n => `<tr><td>${n}</td><td class="num">${tot[n]}</td></tr>`).join('') + '</table>'
-      : '<p class="vuoto">Nessun dato registrato.</p>') + '</div>';
+      : '<p class="vuoto">No data recorded.</p>') + '</div>';
 }
 
 function esc(s) {
@@ -257,22 +257,22 @@ function mostraRegistro() {
     const dettagli = CAMPI.filter(c => v.cicli[c.k]).map(c =>
       `${CAMPI_TRASPORTO.includes(c.k) ? v.farbcode + ' ' : ''}${c.label}: ${v.cicli[c.k]}`).join(' · ');
     return `<div class="card voce"><div><strong>${dataIt(v.data)}</strong> – ${esc(v.pic)}<br><small>${dettagli}</small></div>
-      <button class="elimina" data-id="${v.id}">Elimina</button></div>`;
-  }).join('') : '<p class="vuoto">Nessuna registrazione.</p>';
+      <button class="elimina" data-id="${v.id}">Delete</button></div>`;
+  }).join('') : '<p class="vuoto">No entries.</p>';
 }
 
 $('elenco').addEventListener('click', e => {
   const id = e.target.dataset.id;
-  if (!id || !confirm('Eliminare questa registrazione?')) return;
+  if (!id || !confirm('Delete this entry?')) return;
   voci = voci.filter(v => v.id !== id);
   salvaVoci();
   mostraRegistro();
 });
 
 $('esportaCsv').addEventListener('click', () =>
-  scarica(`cicli-corde-${new Date().toLocaleDateString('sv')}.csv`, creaCsv(voci), 'text/csv;charset=utf-8'));
+  scarica(`rope-cycles-${new Date().toLocaleDateString('sv')}.csv`, creaCsv(voci), 'text/csv;charset=utf-8'));
 $('esportaBackup').addEventListener('click', () =>
-  scarica(`backup-cicli-corde-${new Date().toLocaleDateString('sv')}.json`, JSON.stringify(voci, null, 1), 'application/json'));
+  scarica(`rope-cycles-backup-${new Date().toLocaleDateString('sv')}.json`, JSON.stringify(voci, null, 1), 'application/json'));
 $('importaBackup').addEventListener('click', () => $('fileBackup').click());
 $('fileBackup').addEventListener('change', async e => {
   const file = e.target.files[0];
@@ -287,10 +287,10 @@ $('fileBackup').addEventListener('change', async e => {
     voci = voci.concat(nuove);
     salvaVoci();
     $('erroreBackup').textContent = '';
-    alert(`Ripristinate ${nuove.length} registrazioni.`);
+    alert(`Restored ${nuove.length} entries.`);
     mostraRegistro();
   } catch {
-    $('erroreBackup').textContent = 'File di backup non valido.';
+    $('erroreBackup').textContent = 'Invalid backup file.';
   }
 });
 

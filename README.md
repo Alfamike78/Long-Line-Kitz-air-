@@ -1,4 +1,4 @@
-# Cicli corde AS 350
+# AS 350 Rope Cycles
 
 App web per telefono (PWA) che sostituisce il foglio **APP950-GEN – Zyklen Liste für Transportleinen & Loggingleinen & 2er Gehänge für AS 350**.
 
