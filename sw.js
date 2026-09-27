@@ -1,6 +1,6 @@
 // Rende l'app utilizzabile offline (in campo spesso non c'è rete).
 // Cambiare VERSIONE a ogni rilascio per aggiornare la cache sui telefoni.
-const VERSIONE = 'v2';
+const VERSIONE = 'v3';
 const FILE = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

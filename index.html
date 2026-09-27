@@ -48,6 +48,8 @@
   .voce small { color: var(--muted); }
   .elimina { background: none; border: 0; color: var(--danger); font-size: 14px; padding: 4px; }
   .vuoto { color: var(--muted); }
+  .corda { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 0; font: inherit; }
+  .ritirata { opacity: .55; }
 </style>
 </head>
 <body>
@@ -56,6 +58,7 @@
   <button data-vista="inserisci" class="attivo">New entry</button>
   <button data-vista="totali">Totals</button>
   <button data-vista="registro">Log</button>
+  <button data-vista="corde">Ropes</button>
 </nav>
 <main>
   <section id="inserisci">
@@ -65,10 +68,8 @@
         <input type="date" id="data" required>
         <label for="pic">PIC</label>
         <input type="text" id="pic" autocomplete="name" required>
-        <label for="farbcode">Color code (transport lines)</label>
-        <select id="farbcode"></select>
       </div>
-      <div id="gruppi"></div>
+      <div class="card"><h2>Cycles per rope</h2><div id="contatori"></div></div>
       <p class="errore" id="errore"></p>
       <p class="ok" id="conferma"></p>
       <button class="azione" type="submit">Save</button>
@@ -87,31 +88,48 @@
     </div>
     <div id="elenco"></div>
   </section>
+
+  <section id="corde" hidden>
+    <form id="moduloCorda" class="card" novalidate>
+      <h2>Add / edit rope</h2>
+      <label for="r_id">ID (barcode no. on the Kitz-Air label)</label>
+      <input id="r_id" inputmode="numeric" required>
+      <label for="r_type">Type</label>
+      <select id="r_type"></select>
+      <label for="r_length">Length (m)</label>
+      <input id="r_length" type="number" inputmode="decimal" min="0">
+      <label for="r_color">Color code</label>
+      <select id="r_color"></select>
+      <label for="r_manufacturer">Manufacturer</label>
+      <input id="r_manufacturer">
+      <label for="r_serial">Manufacturer serial no.</label>
+      <input id="r_serial">
+      <label for="r_wll">WLL (kg)</label>
+      <input id="r_wll" type="number" inputmode="numeric" min="0">
+      <label for="r_mfg">Manufactured (year/month)</label>
+      <input id="r_mfg" type="month">
+      <label for="r_note">Note</label>
+      <input id="r_note">
+      <label for="r_status">Status</label>
+      <select id="r_status"><option value="active">In service</option><option value="retired">Retired</option></select>
+      <p class="errore" id="erroreCorda"></p>
+      <button class="azione" type="submit">Save rope</button>
+    </form>
+    <div id="elencoCorde"></div>
+  </section>
 </main>
 
 <script>
-const FARBCODES = ['Purple', 'Brown', 'Orange', 'Red', 'Grey', 'Yellow-Green'];
-// Colonne del foglio APP950-GEN, nello stesso ordine.
-const GRUPPI = [
-  { nome: 'Transport lines', perFarbcode: true, campi: [
-    { k: 'daempfung', label: 'Damper' },
-    { k: 't10', label: '10 m' },
-    { k: 't20', label: '20 m' },
-    { k: 't30', label: '30 m' },
-  ] },
-  { nome: 'Logging lines', campi: [
-    { k: 'log_rot', label: 'Logging line red' },
-    { k: 'log_blau', label: 'Logging line blue' },
-  ] },
-  { nome: '2-leg slings', campi: [
-    { k: 'geh_rot', label: '2-leg sling red' },
-    { k: 'geh_gelb', label: '2-leg sling yellow' },
-    { k: 'geh_blau', label: '2-leg sling blue' },
-  ] },
+const TIPI = ['Transport line', 'Damper', 'Logging line', '2-leg sling'];
+const COLORI = ['Purple', 'Brown', 'Orange', 'Red', 'Grey', 'Yellow-Green', 'Blue', 'Yellow'];
+const CHIAVE = 'rope-cycles-v2';
+// Corde fotografate il 27.09.2026, caricate solo al primo avvio come esempio.
+const CORDE_ESEMPIO = [
+  { id: '1409', type: 'Transport line', length: 10, color: '', manufacturer: 'Teufelberger', serial: '', wll: 1500, mfg: '2024-11',
+    note: 'Label: TRL 15kN 10m B3 · Art. …6-1-10 (partly covered)', status: 'active' },
+  { id: '1411', type: 'Transport line', length: 30, color: '', manufacturer: 'Teufelberger', serial: '', wll: 1500, mfg: '2024-11',
+    note: 'Label: TRL 15kN 30m B3 · Art. …16-1-30 (partly covered)', status: 'active' },
 ];
-const CAMPI = GRUPPI.flatMap(g => g.campi);
-const CAMPI_TRASPORTO = GRUPPI[0].campi.map(c => c.k);
-const CHIAVE = 'cicli-corde-v1';
 
 function leggi(chiave, predefinito) {
   try { return JSON.parse(localStorage.getItem(chiave)) ?? predefinito; } catch { return predefinito; }
@@ -119,38 +137,46 @@ function leggi(chiave, predefinito) {
 function scrivi(chiave, valore) {
   localStorage.setItem(chiave, JSON.stringify(valore));
 }
-let voci = leggi(CHIAVE, []);
+let db = leggi(CHIAVE, null) || { ropes: CORDE_ESEMPIO, entries: [] };
 
-function salvaVoci() {
+function salvaDb() {
   try {
-    scrivi(CHIAVE, voci);
+    scrivi(CHIAVE, db);
     return true;
   } catch {
     return false;
   }
 }
 
+const corda = id => db.ropes.find(r => r.id === id);
+const descrivi = r => [r.type, r.length ? r.length + ' m' : '', r.color].filter(Boolean).join(' · ');
+
 // Ritorna un messaggio di errore, oppure null se la voce è valida.
-function valida(v) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v.data)) return 'Enter the date.';
+function valida(v, ropes) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v.date)) return 'Enter the date.';
   if (typeof v.pic !== 'string' || !v.pic.trim()) return 'Enter the PIC.';
-  if (v.farbcode && !FARBCODES.includes(v.farbcode)) return 'Invalid color code.';
-  for (const c of CAMPI) {
-    if (!Number.isInteger(v.cicli[c.k]) || v.cicli[c.k] < 0) return `Invalid value for ${c.label}.`;
+  const ids = Object.keys(v.cycles || {});
+  if (!ids.length) return 'Enter at least one cycle.';
+  for (const id of ids) {
+    if (!ropes.some(r => r.id === id)) return `Unknown rope ${id}.`;
+    if (!Number.isInteger(v.cycles[id]) || v.cycles[id] <= 0) return `Invalid value for rope ${id}.`;
   }
-  if (CAMPI.every(c => v.cicli[c.k] === 0)) return 'Enter at least one cycle.';
-  if (CAMPI_TRASPORTO.some(k => v.cicli[k] > 0) && !v.farbcode) return 'Select the color code of the transport lines.';
   return null;
 }
 
-function calcolaTotali(elenco) {
+function validaCorda(r) {
+  if (typeof r.id !== 'string' || !r.id.trim()) return 'Enter the rope ID.';
+  if (!TIPI.includes(r.type)) return 'Select the type.';
+  if (r.color && !COLORI.includes(r.color)) return 'Invalid color code.';
+  if (r.length !== null && !(r.length > 0)) return 'Invalid length.';
+  if (r.wll !== null && !(r.wll > 0)) return 'Invalid WLL.';
+  return null;
+}
+
+function calcolaTotali(entries) {
   const tot = {};
-  for (const v of elenco) {
-    for (const c of CAMPI) {
-      if (!v.cicli[c.k]) continue;
-      const nome = CAMPI_TRASPORTO.includes(c.k) ? `${v.farbcode} – ${c.label}` : c.label;
-      tot[nome] = (tot[nome] || 0) + v.cicli[c.k];
-    }
+  for (const v of entries) {
+    for (const [id, n] of Object.entries(v.cycles)) tot[id] = (tot[id] || 0) + n;
   }
   return tot;
 }
@@ -160,12 +186,16 @@ function dataIt(iso) {
   return `${g}.${m}.${a}`;
 }
 
-function creaCsv(elenco) {
+// Una riga per ogni corda usata in ogni registrazione.
+function creaCsv({ ropes, entries }) {
   const cella = s => /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  const intestazione = ['Date', 'PIC', 'Color code', ...CAMPI.map(c => `Cycles ${c.label}`)];
-  const righe = [...elenco].sort((a, b) => a.data.localeCompare(b.data)).map(v =>
-    [dataIt(v.data), v.pic, v.farbcode, ...CAMPI.map(c => String(v.cicli[c.k] || ''))]);
-  // BOM per far leggere correttamente le dieresi a Excel.
+  const intestazione = ['Date', 'PIC', 'Rope ID', 'Type', 'Length (m)', 'Color code', 'Cycles'];
+  const righe = [...entries].sort((a, b) => a.date.localeCompare(b.date)).flatMap(v =>
+    Object.entries(v.cycles).map(([id, n]) => {
+      const r = ropes.find(x => x.id === id) || {};
+      return [dataIt(v.date), v.pic, id, r.type || '', String(r.length ?? ''), r.color || '', String(n)];
+    }));
+  // BOM per far leggere correttamente gli accenti a Excel.
   return '﻿' + [intestazione, ...righe].map(r => r.map(cella).join(';')).join('\r\n');
 }
 
@@ -177,86 +207,81 @@ function scarica(nomeFile, contenuto, tipo) {
   URL.revokeObjectURL(a.href);
 }
 
-// --- Interfaccia ---
-const $ = id => document.getElementById(id);
-
-function costruisciModulo() {
-  $('farbcode').innerHTML = '<option value="">—</option>' +
-    FARBCODES.map(f => `<option>${f}</option>`).join('');
-  $('gruppi').innerHTML = GRUPPI.map(g => `
-    <div class="card"><h2>${g.nome}</h2>
-      ${g.campi.map(c => `
-        <div class="riga">
-          <span>${c.label}</span>
-          <span class="contatore">
-            <button type="button" data-meno="${c.k}" aria-label="Minus">−</button>
-            <input type="number" inputmode="numeric" min="0" step="1" id="c_${c.k}" value="0" aria-label="${c.label}">
-            <button type="button" data-piu="${c.k}" aria-label="Plus">+</button>
-          </span>
-        </div>`).join('')}
-    </div>`).join('');
-  $('gruppi').addEventListener('click', e => {
-    const k = e.target.dataset.piu || e.target.dataset.meno;
-    if (!k) return;
-    const input = $('c_' + k);
-    const n = (parseInt(input.value, 10) || 0) + (e.target.dataset.piu ? 1 : -1);
-    input.value = Math.max(0, n);
-  });
-  azzeraModulo();
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
 }
 
+// --- Interfaccia ---
+const $ = id => document.getElementById(id);
+const oggi = () => new Date().toLocaleDateString('sv');
+
+function mostraContatori() {
+  const attive = db.ropes.filter(r => r.status === 'active');
+  $('contatori').innerHTML = attive.length ? attive.map(r => `
+    <div class="riga">
+      <span><strong>${esc(r.id)}</strong><br><small>${esc(descrivi(r))}</small></span>
+      <span class="contatore">
+        <button type="button" data-meno="${esc(r.id)}" aria-label="Minus">−</button>
+        <input type="number" inputmode="numeric" min="0" step="1" data-corda="${esc(r.id)}" value="0" aria-label="Cycles ${esc(r.id)}">
+        <button type="button" data-piu="${esc(r.id)}" aria-label="Plus">+</button>
+      </span>
+    </div>`).join('') : '<p class="vuoto">No ropes in service. Add them in “Ropes”.</p>';
+}
+
+$('contatori').addEventListener('click', e => {
+  const id = e.target.dataset.piu || e.target.dataset.meno;
+  if (!id) return;
+  const input = [...$('contatori').querySelectorAll('input')].find(i => i.dataset.corda === id);
+  input.value = Math.max(0, (parseInt(input.value, 10) || 0) + (e.target.dataset.piu ? 1 : -1));
+});
+
 function azzeraModulo() {
-  $('data').value = new Date().toLocaleDateString('sv');
-  $('pic').value = leggi('cicli-corde-pic', '');
-  $('farbcode').value = '';
-  for (const c of CAMPI) $('c_' + c.k).value = 0;
+  $('data').value = oggi();
+  $('pic').value = leggi('rope-cycles-pic', '');
+  mostraContatori();
 }
 
 $('modulo').addEventListener('submit', e => {
   e.preventDefault();
   $('conferma').textContent = '';
+  const cycles = {};
+  for (const i of $('contatori').querySelectorAll('input')) {
+    const n = Number(i.value);
+    if (n !== 0) cycles[i.dataset.corda] = n;
+  }
   const v = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    data: $('data').value,
+    date: $('data').value,
     pic: $('pic').value.trim(),
-    farbcode: $('farbcode').value,
-    cicli: Object.fromEntries(CAMPI.map(c => [c.k, Number($('c_' + c.k).value)])),
+    cycles,
   };
-  const errore = valida(v);
+  const errore = valida(v, db.ropes);
   $('errore').textContent = errore || '';
   if (errore) return;
-  // Il Farbcode vale solo per le Transportleinen: se non ci sono cicli di trasporto non lo registro.
-  if (!CAMPI_TRASPORTO.some(k => v.cicli[k] > 0)) v.farbcode = '';
-  voci.push(v);
-  if (!salvaVoci()) {
-    voci.pop();
+  db.entries.push(v);
+  if (!salvaDb()) {
+    db.entries.pop();
     $('errore').textContent = 'Save failed: browser storage is not available.';
     return;
   }
-  try { scrivi('cicli-corde-pic', v.pic); } catch {}
+  try { scrivi('rope-cycles-pic', v.pic); } catch {}
   azzeraModulo();
-  $('conferma').textContent = `Saved: ${dataIt(v.data)}, ${v.pic}.`;
+  $('conferma').textContent = `Saved: ${dataIt(v.date)}, ${v.pic}.`;
 });
 
 function mostraTotali() {
-  const tot = calcolaTotali(voci);
-  const nomi = Object.keys(tot);
-  $('totali').innerHTML = `<div class="card"><h2>Total cycles per item</h2>` +
-    (nomi.length ? `<table><tr><th>Item</th><th class="num">Cycles</th></tr>` +
-      nomi.map(n => `<tr><td>${n}</td><td class="num">${tot[n]}</td></tr>`).join('') + '</table>'
-      : '<p class="vuoto">No data recorded.</p>') + '</div>';
-}
-
-function esc(s) {
-  return s.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
+  const tot = calcolaTotali(db.entries);
+  $('totali').innerHTML = `<div class="card"><h2>Total cycles per rope</h2>` +
+    (db.ropes.length ? `<table><tr><th>Rope</th><th class="num">Cycles</th></tr>` +
+      db.ropes.map(r => `<tr class="${r.status === 'retired' ? 'ritirata' : ''}"><td><strong>${esc(r.id)}</strong> ${esc(descrivi(r))}${r.status === 'retired' ? ' (retired)' : ''}</td><td class="num">${tot[r.id] || 0}</td></tr>`).join('') + '</table>'
+      : '<p class="vuoto">No ropes.</p>') + '</div>';
 }
 
 function mostraRegistro() {
-  const ordinate = [...voci].sort((a, b) => b.data.localeCompare(a.data));
+  const ordinate = [...db.entries].sort((a, b) => b.date.localeCompare(a.date));
   $('elenco').innerHTML = ordinate.length ? ordinate.map(v => {
-    const dettagli = CAMPI.filter(c => v.cicli[c.k]).map(c =>
-      `${CAMPI_TRASPORTO.includes(c.k) ? v.farbcode + ' ' : ''}${c.label}: ${v.cicli[c.k]}`).join(' · ');
-    return `<div class="card voce"><div><strong>${dataIt(v.data)}</strong> – ${esc(v.pic)}<br><small>${dettagli}</small></div>
+    const dettagli = Object.entries(v.cycles).map(([id, n]) => `${id}: ${n}`).join(' · ');
+    return `<div class="card voce"><div><strong>${dataIt(v.date)}</strong> – ${esc(v.pic)}<br><small>${esc(dettagli)}</small></div>
       <button class="elimina" data-id="${v.id}">Delete</button></div>`;
   }).join('') : '<p class="vuoto">No entries.</p>';
 }
@@ -264,30 +289,75 @@ function mostraRegistro() {
 $('elenco').addEventListener('click', e => {
   const id = e.target.dataset.id;
   if (!id || !confirm('Delete this entry?')) return;
-  voci = voci.filter(v => v.id !== id);
-  salvaVoci();
+  db.entries = db.entries.filter(v => v.id !== id);
+  salvaDb();
   mostraRegistro();
 });
 
+const CAMPI_CORDA = ['id', 'type', 'length', 'color', 'manufacturer', 'serial', 'wll', 'mfg', 'note', 'status'];
+const NUMERICI = ['length', 'wll'];
+
+function mostraCorde() {
+  $('elencoCorde').innerHTML = db.ropes.map(r => `
+    <div class="card ${r.status === 'retired' ? 'ritirata' : ''}"><button class="corda" data-corda="${esc(r.id)}">
+      <strong>${esc(r.id)}</strong> – ${esc(descrivi(r) || '')}${r.status === 'retired' ? ' (retired)' : ''}<br>
+      <small>${esc([r.manufacturer, r.serial && 'S/N ' + r.serial, r.wll && 'WLL ' + r.wll + ' kg', r.mfg && 'Mfd. ' + r.mfg, r.note].filter(Boolean).join(' · '))}</small>
+    </button></div>`).join('') || '<p class="vuoto">No ropes.</p>';
+}
+
+// Tocco su una corda: la carica nel modulo per modificarla.
+$('elencoCorde').addEventListener('click', e => {
+  const r = corda(e.target.closest('[data-corda]')?.dataset.corda);
+  if (!r) return;
+  for (const k of CAMPI_CORDA) $('r_' + k).value = r[k] ?? '';
+  $('r_color').value = r.color || '';
+  window.scrollTo(0, 0);
+});
+
+$('moduloCorda').addEventListener('submit', e => {
+  e.preventDefault();
+  const r = Object.fromEntries(CAMPI_CORDA.map(k => {
+    const val = $('r_' + k).value.trim();
+    return [k, NUMERICI.includes(k) ? (val === '' ? null : Number(val)) : val];
+  }));
+  const errore = validaCorda(r);
+  $('erroreCorda').textContent = errore || '';
+  if (errore) return;
+  const i = db.ropes.findIndex(x => x.id === r.id);
+  if (i >= 0 && !confirm(`Rope ${r.id} already exists. Overwrite it?`)) return;
+  const precedente = db.ropes.slice();
+  if (i >= 0) db.ropes[i] = r; else db.ropes.push(r);
+  if (!salvaDb()) {
+    db.ropes = precedente;
+    $('erroreCorda').textContent = 'Save failed: browser storage is not available.';
+    return;
+  }
+  $('moduloCorda').reset();
+  mostraCorde();
+});
+
 $('esportaCsv').addEventListener('click', () =>
-  scarica(`rope-cycles-${new Date().toLocaleDateString('sv')}.csv`, creaCsv(voci), 'text/csv;charset=utf-8'));
+  scarica(`rope-cycles-${oggi()}.csv`, creaCsv(db), 'text/csv;charset=utf-8'));
 $('esportaBackup').addEventListener('click', () =>
-  scarica(`rope-cycles-backup-${new Date().toLocaleDateString('sv')}.json`, JSON.stringify(voci, null, 1), 'application/json'));
+  scarica(`rope-cycles-backup-${oggi()}.json`, JSON.stringify(db, null, 1), 'application/json'));
 $('importaBackup').addEventListener('click', () => $('fileBackup').click());
 $('fileBackup').addEventListener('change', async e => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
   try {
-    const importate = JSON.parse(await file.text());
-    if (!Array.isArray(importate) || importate.some(v => !v.id || valida(v))) throw new Error();
-    // Unione per id: reimportare lo stesso backup non crea doppioni.
-    const esistenti = new Set(voci.map(v => v.id));
-    const nuove = importate.filter(v => !esistenti.has(v.id));
-    voci = voci.concat(nuove);
-    salvaVoci();
+    const imp = JSON.parse(await file.text());
+    if (!Array.isArray(imp.ropes) || !Array.isArray(imp.entries) || imp.ropes.some(validaCorda)) throw new Error();
+    // Unione: corde per ID (quelle già presenti restano), registrazioni per id, così reimportare non crea doppioni.
+    const nuoveCorde = imp.ropes.filter(r => !corda(r.id));
+    const ropes = db.ropes.concat(nuoveCorde);
+    if (imp.entries.some(v => !v.id || valida(v, ropes))) throw new Error();
+    const esistenti = new Set(db.entries.map(v => v.id));
+    const nuove = imp.entries.filter(v => !esistenti.has(v.id));
+    db = { ropes, entries: db.entries.concat(nuove) };
+    salvaDb();
     $('erroreBackup').textContent = '';
-    alert(`Restored ${nuove.length} entries.`);
+    alert(`Restored ${nuove.length} entries and ${nuoveCorde.length} ropes.`);
     mostraRegistro();
   } catch {
     $('erroreBackup').textContent = 'Invalid backup file.';
@@ -299,11 +369,15 @@ document.querySelector('nav').addEventListener('click', e => {
   if (!vista) return;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('attivo', b === e.target));
   document.querySelectorAll('main section').forEach(s => s.hidden = s.id !== vista);
+  if (vista === 'inserisci') mostraContatori();
   if (vista === 'totali') mostraTotali();
   if (vista === 'registro') mostraRegistro();
+  if (vista === 'corde') mostraCorde();
 });
 
-costruisciModulo();
+$('r_type').innerHTML = TIPI.map(t => `<option>${t}</option>`).join('');
+$('r_color').innerHTML = '<option value="">— not set —</option>' + COLORI.map(c => `<option>${c}</option>`).join('');
+azzeraModulo();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>

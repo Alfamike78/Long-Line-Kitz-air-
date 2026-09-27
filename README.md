@@ -2,9 +2,12 @@
 
 App web per telefono (PWA) che sostituisce il foglio **APP950-GEN – Zyklen Liste für Transportleinen & Loggingleinen & 2er Gehänge für AS 350**.
 
-- **Inserisci**: data, PIC, Farbcode e cicli per Dämpfung, 10/20/30 m, Loggingleine rot/blau, 2er Gehänge rot/gelb/blau.
-- **Totali**: cicli sommati per ogni attrezzatura (le Transportleinen sono separate per Farbcode).
-- **Registro**: elenco, eliminazione, esportazione CSV (colonne come il foglio cartaceo) e backup/ripristino JSON.
+- **Ropes**: anagrafica delle corde (ID del codice a barre Kitz-Air, tipo, lunghezza, colore, costruttore, S/N, WLL, data di fabbricazione, stato). Toccare una corda per modificarla.
+- **New entry**: data, PIC e cicli per ogni corda in servizio.
+- **Totals**: cicli totali per singola corda.
+- **Log**: elenco, eliminazione, esportazione CSV (una riga per corda per registrazione) e backup/ripristino JSON.
+
+Al primo avvio sono caricate come esempio le corde 1409 e 1411.
 
 I dati restano **solo sul telefono** (localStorage). Scaricare un backup regolarmente.
 
