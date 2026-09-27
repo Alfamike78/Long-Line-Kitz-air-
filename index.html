@@ -49,11 +49,12 @@
   .elimina { background: none; border: 0; color: var(--danger); font-size: 14px; padding: 4px; }
   .vuoto { color: var(--muted); }
   .corda { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 0; font: inherit; }
-  .ritirata { opacity: .55; }
+  header small { display: block; font-size: 13px; opacity: .85; }
+  .azioni { display: flex; flex-direction: column; gap: 4px; }
 </style>
 </head>
 <body>
-<header><h1>Rope cycles – AS 350</h1></header>
+<header><h1>Rope cycles – AS 350</h1><small id="statoSync"></small></header>
 <nav>
   <button data-vista="inserisci" class="attivo">New entry</button>
   <button data-vista="totali">Totals</button>
@@ -64,6 +65,7 @@
   <section id="inserisci">
     <form id="modulo" novalidate>
       <div class="card">
+        <p class="ok" id="inModifica" hidden></p>
         <label for="data">Date</label>
         <input type="date" id="data" required>
         <label for="pic">PIC</label>
@@ -73,6 +75,7 @@
       <p class="errore" id="errore"></p>
       <p class="ok" id="conferma"></p>
       <button class="azione" type="submit">Save</button>
+      <button class="azione secondaria" type="button" id="annulla" hidden>Cancel edit</button>
     </form>
   </section>
 
@@ -81,12 +84,16 @@
   <section id="registro" hidden>
     <div class="card">
       <button class="azione" id="esportaCsv">Export CSV</button>
-      <button class="azione secondaria" id="esportaBackup">Download backup</button>
-      <button class="azione secondaria" id="importaBackup">Restore backup</button>
-      <input type="file" id="fileBackup" accept="application/json,.json" hidden>
-      <p class="errore" id="erroreBackup"></p>
     </div>
     <div id="elenco"></div>
+    <form id="moduloSync" class="card" novalidate>
+      <h2>Google Drive sync</h2>
+      <label for="s_url">Script URL</label>
+      <input id="s_url" type="url" placeholder="https://script.google.com/macros/s/…/exec">
+      <label for="s_token">Access code</label>
+      <input id="s_token">
+      <button class="azione secondaria" type="submit">Save and sync</button>
+    </form>
   </section>
 
   <section id="corde" hidden>
@@ -110,8 +117,6 @@
       <input id="r_mfg" type="month">
       <label for="r_note">Note</label>
       <input id="r_note">
-      <label for="r_status">Status</label>
-      <select id="r_status"><option value="active">In service</option><option value="retired">Retired</option></select>
       <p class="errore" id="erroreCorda"></p>
       <button class="azione" type="submit">Save rope</button>
     </form>
@@ -122,14 +127,9 @@
 <script>
 const TIPI = ['Transport line', 'Damper', 'Logging line', '2-leg sling'];
 const COLORI = ['Purple', 'Brown', 'Orange', 'Red', 'Grey', 'Yellow-Green', 'Blue', 'Yellow'];
-const CHIAVE = 'rope-cycles-v2';
-// Corde fotografate il 27.09.2026, caricate solo al primo avvio come esempio.
-const CORDE_ESEMPIO = [
-  { id: '1409', type: 'Transport line', length: 10, color: '', manufacturer: 'Teufelberger', serial: '', wll: 1500, mfg: '2024-11',
-    note: 'Label: TRL 15kN 10m B3 · Art. …6-1-10 (partly covered)', status: 'active' },
-  { id: '1411', type: 'Transport line', length: 30, color: '', manufacturer: 'Teufelberger', serial: '', wll: 1500, mfg: '2024-11',
-    note: 'Label: TRL 15kN 30m B3 · Art. …16-1-30 (partly covered)', status: 'active' },
-];
+const CHIAVE = 'rope-cycles-v3';
+const CHIAVE_CODA = 'rope-cycles-outbox';
+const CHIAVE_SYNC = 'rope-cycles-sync';
 
 function leggi(chiave, predefinito) {
   try { return JSON.parse(localStorage.getItem(chiave)) ?? predefinito; } catch { return predefinito; }
@@ -137,17 +137,22 @@ function leggi(chiave, predefinito) {
 function scrivi(chiave, valore) {
   localStorage.setItem(chiave, JSON.stringify(valore));
 }
-let db = leggi(CHIAVE, null) || { ropes: CORDE_ESEMPIO, entries: [] };
+let db = leggi(CHIAVE, { ropes: [], entries: [] });
+// Modifiche fatte sul telefono e non ancora arrivate al foglio Google.
+let coda = leggi(CHIAVE_CODA, []);
+let sync = leggi(CHIAVE_SYNC, { url: '', token: '' });
 
 function salvaDb() {
   try {
     scrivi(CHIAVE, db);
+    scrivi(CHIAVE_CODA, coda);
     return true;
   } catch {
     return false;
   }
 }
 
+const visibili = elenco => elenco.filter(x => !x.deleted);
 const corda = id => db.ropes.find(r => r.id === id);
 const descrivi = r => [r.type, r.length ? r.length + ' m' : '', r.color].filter(Boolean).join(' · ');
 
@@ -175,10 +180,87 @@ function validaCorda(r) {
 
 function calcolaTotali(entries) {
   const tot = {};
-  for (const v of entries) {
+  for (const v of visibili(entries)) {
     for (const [id, n] of Object.entries(v.cycles)) tot[id] = (tot[id] || 0) + n;
   }
   return tot;
+}
+
+// Applica una modifica in locale (sostituisce l'elemento con lo stesso id).
+function applica(tabella, item) {
+  const elenco = tabella === 'Ropes' ? db.ropes : db.entries;
+  const i = elenco.findIndex(x => x.id === item.id);
+  if (i >= 0) elenco[i] = item; else elenco.push(item);
+}
+
+// Salva una modifica sul telefono, la mette in coda per il foglio Google e prova a inviarla.
+function registra(tabella, item) {
+  item.updatedAt = new Date().toISOString();
+  item.updatedBy = leggi('rope-cycles-pic', '');
+  const precedente = JSON.stringify(db);
+  applica(tabella, item);
+  coda.push({ table: tabella, item });
+  if (!salvaDb()) {
+    db = JSON.parse(precedente);
+    coda.pop();
+    return false;
+  }
+  sincronizza();
+  return true;
+}
+
+// I valori dal foglio arrivano tutti come testo.
+function normalizza(dati) {
+  const bool = x => x === true || String(x).toLowerCase() === 'true';
+  const num = x => x === '' || x == null ? null : Number(x);
+  return {
+    ropes: dati.ropes.map(r => ({ ...r, length: num(r.length), wll: num(r.wll), deleted: bool(r.deleted) })),
+    entries: dati.entries.map(v => {
+      let cycles = {};
+      try { cycles = typeof v.cycles === 'string' ? JSON.parse(v.cycles) : v.cycles; } catch {}
+      return { ...v, cycles, deleted: bool(v.deleted) };
+    }),
+  };
+}
+
+let sincronizzando = false;
+async function sincronizza() {
+  if (!sync.url || sincronizzando) return mostraStato();
+  sincronizzando = true;
+  mostraStato('Syncing…');
+  const inviate = coda.length;
+  try {
+    const res = await fetch(sync.url, {
+      method: 'POST',
+      // text/plain evita la richiesta preliminare CORS, che Apps Script non gestisce.
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: sync.token, changes: coda.slice(0, inviate) }),
+    });
+    const dati = await res.json();
+    if (dati.error) throw new Error(dati.error);
+    coda.splice(0, inviate);
+    db = normalizza(dati);
+    // Modifiche fatte durante l'invio: restano in coda e si riapplicano sopra i dati del foglio.
+    for (const c of coda) applica(c.table, c.item);
+    salvaDb();
+    try { scrivi('rope-cycles-ultimo-sync', new Date().toISOString()); } catch {}
+    sincronizzando = false;
+    aggiornaVista();
+    if (coda.length) sincronizza();
+  } catch (err) {
+    sincronizzando = false;
+    mostraStato(err.message && !/fetch|JSON|network/i.test(err.message) ? `Sync error: ${err.message}` : null);
+  }
+}
+
+function mostraStato(testo) {
+  if (!testo) {
+    const ultimo = leggi('rope-cycles-ultimo-sync', null);
+    testo = !sync.url ? 'Not connected to Google Drive – data only on this phone'
+      : (coda.length ? `${coda.length} change(s) waiting for network · ` : '') +
+        (ultimo ? `Last sync ${new Date(ultimo).toLocaleString('en-GB')}` : 'Never synced');
+  }
+  $('statoSync').textContent = testo;
 }
 
 function dataIt(iso) {
@@ -190,7 +272,7 @@ function dataIt(iso) {
 function creaCsv({ ropes, entries }) {
   const cella = s => /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   const intestazione = ['Date', 'PIC', 'Rope ID', 'Type', 'Length (m)', 'Color code', 'Cycles'];
-  const righe = [...entries].sort((a, b) => a.date.localeCompare(b.date)).flatMap(v =>
+  const righe = visibili(entries).sort((a, b) => a.date.localeCompare(b.date)).flatMap(v =>
     Object.entries(v.cycles).map(([id, n]) => {
       const r = ropes.find(x => x.id === id) || {};
       return [dataIt(v.date), v.pic, id, r.type || '', String(r.length ?? ''), r.color || '', String(n)];
@@ -214,18 +296,20 @@ function esc(s) {
 // --- Interfaccia ---
 const $ = id => document.getElementById(id);
 const oggi = () => new Date().toLocaleDateString('sv');
+let inModifica = null; // registrazione in corso di modifica
 
-function mostraContatori() {
-  const attive = db.ropes.filter(r => r.status === 'active');
-  $('contatori').innerHTML = attive.length ? attive.map(r => `
+// In modifica mostra anche le corde rimosse usate da quella registrazione, per non perderne i cicli.
+function mostraContatori(cicli = {}) {
+  const elenco = db.ropes.filter(r => !r.deleted || cicli[r.id]);
+  $('contatori').innerHTML = elenco.length ? elenco.map(r => `
     <div class="riga">
       <span><strong>${esc(r.id)}</strong><br><small>${esc(descrivi(r))}</small></span>
       <span class="contatore">
         <button type="button" data-meno="${esc(r.id)}" aria-label="Minus">−</button>
-        <input type="number" inputmode="numeric" min="0" step="1" data-corda="${esc(r.id)}" value="0" aria-label="Cycles ${esc(r.id)}">
+        <input type="number" inputmode="numeric" min="0" step="1" data-corda="${esc(r.id)}" value="${cicli[r.id] || 0}" aria-label="Cycles ${esc(r.id)}">
         <button type="button" data-piu="${esc(r.id)}" aria-label="Plus">+</button>
       </span>
-    </div>`).join('') : '<p class="vuoto">No ropes in service. Add them in “Ropes”.</p>';
+    </div>`).join('') : '<p class="vuoto">No ropes. Add them in “Ropes”.</p>';
 }
 
 $('contatori').addEventListener('click', e => {
@@ -236,10 +320,13 @@ $('contatori').addEventListener('click', e => {
 });
 
 function azzeraModulo() {
+  inModifica = null;
+  $('inModifica').hidden = $('annulla').hidden = true;
   $('data').value = oggi();
   $('pic').value = leggi('rope-cycles-pic', '');
   mostraContatori();
 }
+$('annulla').addEventListener('click', azzeraModulo);
 
 $('modulo').addEventListener('submit', e => {
   e.preventDefault();
@@ -250,67 +337,87 @@ $('modulo').addEventListener('submit', e => {
     if (n !== 0) cycles[i.dataset.corda] = n;
   }
   const v = {
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    id: inModifica || Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     date: $('data').value,
     pic: $('pic').value.trim(),
     cycles,
+    deleted: false,
   };
   const errore = valida(v, db.ropes);
   $('errore').textContent = errore || '';
   if (errore) return;
-  db.entries.push(v);
-  if (!salvaDb()) {
-    db.entries.pop();
+  // In modifica non cambio il PIC memorizzato: serve a registrare chi ha fatto la modifica.
+  if (!inModifica) try { scrivi('rope-cycles-pic', v.pic); } catch {}
+  if (!registra('Entries', v)) {
     $('errore').textContent = 'Save failed: browser storage is not available.';
     return;
   }
-  try { scrivi('rope-cycles-pic', v.pic); } catch {}
   azzeraModulo();
   $('conferma').textContent = `Saved: ${dataIt(v.date)}, ${v.pic}.`;
 });
 
 function mostraTotali() {
   const tot = calcolaTotali(db.entries);
+  const corde = visibili(db.ropes);
   $('totali').innerHTML = `<div class="card"><h2>Total cycles per rope</h2>` +
-    (db.ropes.length ? `<table><tr><th>Rope</th><th class="num">Cycles</th></tr>` +
-      db.ropes.map(r => `<tr class="${r.status === 'retired' ? 'ritirata' : ''}"><td><strong>${esc(r.id)}</strong> ${esc(descrivi(r))}${r.status === 'retired' ? ' (retired)' : ''}</td><td class="num">${tot[r.id] || 0}</td></tr>`).join('') + '</table>'
+    (corde.length ? `<table><tr><th>Rope</th><th class="num">Cycles</th></tr>` +
+      corde.map(r => `<tr><td><strong>${esc(r.id)}</strong> ${esc(descrivi(r))}</td><td class="num">${tot[r.id] || 0}</td></tr>`).join('') + '</table>'
       : '<p class="vuoto">No ropes.</p>') + '</div>';
 }
 
 function mostraRegistro() {
-  const ordinate = [...db.entries].sort((a, b) => b.date.localeCompare(a.date));
+  const ordinate = visibili(db.entries).sort((a, b) => b.date.localeCompare(a.date));
   $('elenco').innerHTML = ordinate.length ? ordinate.map(v => {
     const dettagli = Object.entries(v.cycles).map(([id, n]) => `${id}: ${n}`).join(' · ');
     return `<div class="card voce"><div><strong>${dataIt(v.date)}</strong> – ${esc(v.pic)}<br><small>${esc(dettagli)}</small></div>
-      <button class="elimina" data-id="${v.id}">Delete</button></div>`;
+      <div class="azioni"><button class="elimina" data-modifica="${esc(v.id)}">Edit</button>
+      <button class="elimina" data-elimina="${esc(v.id)}">Delete</button></div></div>`;
   }).join('') : '<p class="vuoto">No entries.</p>';
 }
 
 $('elenco').addEventListener('click', e => {
-  const id = e.target.dataset.id;
-  if (!id || !confirm('Delete this entry?')) return;
-  db.entries = db.entries.filter(v => v.id !== id);
-  salvaDb();
-  mostraRegistro();
+  const { modifica, elimina } = e.target.dataset;
+  const v = db.entries.find(x => x.id === (modifica || elimina));
+  if (!v) return;
+  if (elimina) {
+    if (!confirm('Delete this entry? It stays recorded in the Drive database.')) return;
+    registra('Entries', { ...v, deleted: true });
+    mostraRegistro();
+    return;
+  }
+  vai('inserisci');
+  inModifica = v.id;
+  $('inModifica').textContent = `Editing entry of ${dataIt(v.date)}`;
+  $('inModifica').hidden = $('annulla').hidden = false;
+  $('data').value = v.date;
+  $('pic').value = v.pic;
+  mostraContatori(v.cycles);
+  window.scrollTo(0, 0);
 });
 
-const CAMPI_CORDA = ['id', 'type', 'length', 'color', 'manufacturer', 'serial', 'wll', 'mfg', 'note', 'status'];
+const CAMPI_CORDA = ['id', 'type', 'length', 'color', 'manufacturer', 'serial', 'wll', 'mfg', 'note'];
 const NUMERICI = ['length', 'wll'];
 
 function mostraCorde() {
-  $('elencoCorde').innerHTML = db.ropes.map(r => `
-    <div class="card ${r.status === 'retired' ? 'ritirata' : ''}"><button class="corda" data-corda="${esc(r.id)}">
-      <strong>${esc(r.id)}</strong> – ${esc(descrivi(r) || '')}${r.status === 'retired' ? ' (retired)' : ''}<br>
+  $('elencoCorde').innerHTML = visibili(db.ropes).map(r => `
+    <div class="card voce"><button class="corda" data-corda="${esc(r.id)}">
+      <strong>${esc(r.id)}</strong> – ${esc(descrivi(r))}<br>
       <small>${esc([r.manufacturer, r.serial && 'S/N ' + r.serial, r.wll && 'WLL ' + r.wll + ' kg', r.mfg && 'Mfd. ' + r.mfg, r.note].filter(Boolean).join(' · '))}</small>
-    </button></div>`).join('') || '<p class="vuoto">No ropes.</p>';
+    </button><button class="elimina" data-rimuovi="${esc(r.id)}">Remove</button></div>`).join('') || '<p class="vuoto">No ropes.</p>';
 }
 
-// Tocco su una corda: la carica nel modulo per modificarla.
 $('elencoCorde').addEventListener('click', e => {
+  const rimuovi = e.target.dataset.rimuovi;
+  if (rimuovi) {
+    if (!confirm(`Remove rope ${rimuovi} from the app? It stays recorded in the Drive database with all its cycles.`)) return;
+    registra('Ropes', { ...corda(rimuovi), deleted: true });
+    mostraCorde();
+    return;
+  }
+  // Tocco su una corda: la carica nel modulo per modificarla.
   const r = corda(e.target.closest('[data-corda]')?.dataset.corda);
   if (!r) return;
   for (const k of CAMPI_CORDA) $('r_' + k).value = r[k] ?? '';
-  $('r_color').value = r.color || '';
   window.scrollTo(0, 0);
 });
 
@@ -320,15 +427,15 @@ $('moduloCorda').addEventListener('submit', e => {
     const val = $('r_' + k).value.trim();
     return [k, NUMERICI.includes(k) ? (val === '' ? null : Number(val)) : val];
   }));
+  r.deleted = false;
   const errore = validaCorda(r);
   $('erroreCorda').textContent = errore || '';
   if (errore) return;
-  const i = db.ropes.findIndex(x => x.id === r.id);
-  if (i >= 0 && !confirm(`Rope ${r.id} already exists. Overwrite it?`)) return;
-  const precedente = db.ropes.slice();
-  if (i >= 0) db.ropes[i] = r; else db.ropes.push(r);
-  if (!salvaDb()) {
-    db.ropes = precedente;
+  const esistente = corda(r.id);
+  if (esistente && !confirm(esistente.deleted
+    ? `Rope ${r.id} was removed earlier. Restore it with its old cycles?`
+    : `Rope ${r.id} already exists. Overwrite it?`)) return;
+  if (!registra('Ropes', r)) {
     $('erroreCorda').textContent = 'Save failed: browser storage is not available.';
     return;
   }
@@ -338,46 +445,46 @@ $('moduloCorda').addEventListener('submit', e => {
 
 $('esportaCsv').addEventListener('click', () =>
   scarica(`rope-cycles-${oggi()}.csv`, creaCsv(db), 'text/csv;charset=utf-8'));
-$('esportaBackup').addEventListener('click', () =>
-  scarica(`rope-cycles-backup-${oggi()}.json`, JSON.stringify(db, null, 1), 'application/json'));
-$('importaBackup').addEventListener('click', () => $('fileBackup').click());
-$('fileBackup').addEventListener('change', async e => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file) return;
-  try {
-    const imp = JSON.parse(await file.text());
-    if (!Array.isArray(imp.ropes) || !Array.isArray(imp.entries) || imp.ropes.some(validaCorda)) throw new Error();
-    // Unione: corde per ID (quelle già presenti restano), registrazioni per id, così reimportare non crea doppioni.
-    const nuoveCorde = imp.ropes.filter(r => !corda(r.id));
-    const ropes = db.ropes.concat(nuoveCorde);
-    if (imp.entries.some(v => !v.id || valida(v, ropes))) throw new Error();
-    const esistenti = new Set(db.entries.map(v => v.id));
-    const nuove = imp.entries.filter(v => !esistenti.has(v.id));
-    db = { ropes, entries: db.entries.concat(nuove) };
-    salvaDb();
-    $('erroreBackup').textContent = '';
-    alert(`Restored ${nuove.length} entries and ${nuoveCorde.length} ropes.`);
-    mostraRegistro();
-  } catch {
-    $('erroreBackup').textContent = 'Invalid backup file.';
-  }
+
+$('moduloSync').addEventListener('submit', e => {
+  e.preventDefault();
+  sync = { url: $('s_url').value.trim(), token: $('s_token').value.trim() };
+  try { scrivi(CHIAVE_SYNC, sync); } catch {}
+  sincronizza();
 });
+
+function vai(vista) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('attivo', b.dataset.vista === vista));
+  document.querySelectorAll('main section').forEach(s => s.hidden = s.id !== vista);
+  if (vista === 'totali') mostraTotali();
+  if (vista === 'registro') mostraRegistro();
+  if (vista === 'corde') mostraCorde();
+}
+
+// Dopo una sincronizzazione ridisegna la vista aperta, senza toccare un inserimento in corso.
+function aggiornaVista() {
+  mostraStato();
+  const vista = document.querySelector('nav .attivo').dataset.vista;
+  if (vista === 'inserisci') {
+    const inCorso = [...$('contatori').querySelectorAll('input')].some(i => Number(i.value) !== 0);
+    if (!inModifica && !inCorso) mostraContatori();
+  } else vai(vista);
+}
 
 document.querySelector('nav').addEventListener('click', e => {
   const vista = e.target.dataset.vista;
   if (!vista) return;
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('attivo', b === e.target));
-  document.querySelectorAll('main section').forEach(s => s.hidden = s.id !== vista);
-  if (vista === 'inserisci') mostraContatori();
-  if (vista === 'totali') mostraTotali();
-  if (vista === 'registro') mostraRegistro();
-  if (vista === 'corde') mostraCorde();
+  vai(vista);
+  if (vista === 'inserisci' && !inModifica) mostraContatori();
 });
 
 $('r_type').innerHTML = TIPI.map(t => `<option>${t}</option>`).join('');
 $('r_color').innerHTML = '<option value="">— not set —</option>' + COLORI.map(c => `<option>${c}</option>`).join('');
+$('s_url').value = sync.url;
+$('s_token').value = sync.token;
 azzeraModulo();
+sincronizza();
+window.addEventListener('online', sincronizza);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
